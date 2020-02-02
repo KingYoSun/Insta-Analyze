@@ -3,6 +3,7 @@ import datetime
 import boto3
 import os
 import pathlib
+import re
 
 try:
     comprehend = boto3.client('comprehend', region_name='us-east-2')
@@ -34,8 +35,12 @@ class ExtractData:
     def extract(self):
         for post in self.data:
             text = post['shortcode_media']['edge_media_to_caption']['edges'][0]['node']['text']
-            text_replaced = text.replace('\n', '.').replace('#', ', ')
-            if len(text) > 0:
+            text_replaced = text.replace('\n', '')
+            #ハッシュタグ抽出
+            hashtags = re.findall(r'([#＃][Ａ-Ｚａ-ｚA-Za-z一-鿆0-9０-９ぁ-ヶｦ-ﾟー]+)', text_replaced)
+            #除外設定
+            negative_keywords = ["#プレゼント", "#プレゼントキャンペーン", "#プレキャン", "#プレゼント企画", "#懸賞", "キャンペーン", "#キャンペーン実施中", "#インスタキャンペーン"]
+            if len(text) > 0 and (len(set(hashtags) & set(negative_keywords)) == 0):
                 self.ext_data.append({
                     "id": post['shortcode_media']['id'],
                     "shortcode": post['shortcode_media']['shortcode'],
@@ -44,6 +49,7 @@ class ExtractData:
                     "text": text_replaced,
                     "like": int(post['shortcode_media']['edge_media_preview_like']['count']),
                     "comment_count": int(post['shortcode_media']['edge_media_preview_comment']['count']),
+                    "hashtags": hashtags,
                     "language": "",
                     "sentiment": "",
                     "comments": [],
@@ -70,18 +76,19 @@ class Comprehend:
         except Exception as e:
             print("Detect language failed: " + str(e))
         else:
-            print("Detect language success")
+            print("Detect language successful")
     
     def keyphrases(self):
         try:
             for i in range(len(self.data)):
                 response = comprehend.detect_key_phrases(Text=self.data[i]['text'], LanguageCode=self.data[i]['language'])
                 if len(response['KeyPhrases']) > 0:
-                    self.data[i]['keyphrases'] = response['KeyPhrases']
+                    for j in range(len(response['KeyPhrases'])):
+                        self.data[i]['keyphrases'].append(response['KeyPhrases'][j]['Text'])
         except Exception as e:
             print("Detect keyphrases failed: " + str(e))
         else:
-            print("Detect keyphrases success")
+            print("Detect keyphrases successful")
             
     def entities(self):
         try:
@@ -92,7 +99,7 @@ class Comprehend:
         except Exception as e:
             print("Detect entities failed: " + str(e))
         else:
-            print("Detect entities success")
+            print("Detect entities successful")
 
     def sentiment(self):
         try:
@@ -103,14 +110,25 @@ class Comprehend:
         except Exception as e:
             print("Detect sentiment failed: " + str(e))
         else:
-            print("Detect sentiment success")
+            print("Detect sentiment successful")
 
 
 file = pathlib.Path('insta-analyze/data/test_data_full.json')
 data = ExtractData(file.resolve())
 data.extract()
 comprehend_data = Comprehend(data.ext_data)
+del data
 comprehend_data.language()
 #comprehend_data.entities()
-comprehend_data.keyphrases()
+#comprehend_data.keyphrases()
 comprehend_data.sentiment()
+
+#データをjsonで出力
+try:
+    filepath = pathlib.Path('insta-analyze/export/data.json')
+    with open(filepath, 'w') as f:
+        json.dump(comprehend_data.data, f, indent=4, ensure_ascii=False)
+except Exception as e:
+    print("Export failed: " + str(e))
+else:
+    print("Export successful")
