@@ -12,6 +12,10 @@ except:
 else:
     print("Finish Setup Comprehend")
 
+#テキストからハッシュタグを抜く
+def exclude_hashtag(text):
+    return re.sub(r'([#＃][Ａ-Ｚａ-ｚA-Za-z一-鿆0-9０-９ぁ-ヶｦ-ﾟー]+)', "", text)
+
 class ExtractData:
     def __init__(self, data_address):
         with open(data_address) as f:
@@ -34,13 +38,17 @@ class ExtractData:
         
     def extract(self):
         for post in self.data:
-            text = post['shortcode_media']['edge_media_to_caption']['edges'][0]['node']['text']
-            text_replaced = text.replace('\n', '')
-            #ハッシュタグ抽出
-            hashtags = re.findall(r'([#＃][Ａ-Ｚａ-ｚA-Za-z一-鿆0-9０-９ぁ-ヶｦ-ﾟー]+)', text_replaced)
+            #テキストからハッシュタグ抽出
+            if post['shortcode_media']['edge_media_to_caption']['edges'] == []:
+                text = ""
+                hashtags = []
+            else:
+                text = post['shortcode_media']['edge_media_to_caption']['edges'][0]['node']['text']
+                text_replaced = text.replace('\n', '')
+                hashtags = re.findall(r'([#＃][Ａ-Ｚａ-ｚA-Za-z一-鿆0-9０-９ぁ-ヶｦ-ﾟー]+)', text_replaced)
             #除外設定
             negative_keywords = ["#プレゼント", "#プレゼントキャンペーン", "#プレキャン", "#プレゼント企画", "#懸賞", "キャンペーン", "#キャンペーン実施中", "#インスタキャンペーン"]
-            if len(text) > 0 and (len(set(hashtags) & set(negative_keywords)) == 0):
+            if len(text) > 0 and len(text.encode()) < 4950 and (len(set(hashtags) & set(negative_keywords)) == 0):
                 self.ext_data.append({
                     "id": post['shortcode_media']['id'],
                     "shortcode": post['shortcode_media']['shortcode'],
@@ -50,7 +58,7 @@ class ExtractData:
                     "like": int(post['shortcode_media']['edge_media_preview_like']['count']),
                     "comment_count": int(post['shortcode_media']['edge_media_preview_comment']['count']),
                     "hashtags": hashtags,
-                    "language": "",
+                    "language": "ja",
                     "sentiment": "",
                     "comments": [],
                     "keyphrases": [],
@@ -74,41 +82,62 @@ class Comprehend:
                 response = comprehend.detect_dominant_language(Text=self.data[i]['text'])
                 self.data[i]['language'] = response['Languages'][0]['LanguageCode']
         except Exception as e:
-            print("Detect language failed: " + str(e))
+            raise("Detect language failed: " + str(e))
         else:
             print("Detect language successful")
     
     def keyphrases(self):
         try:
+            count = 0
             for i in range(len(self.data)):
-                response = comprehend.detect_key_phrases(Text=self.data[i]['text'], LanguageCode=self.data[i]['language'])
+                text_without_hashtag = exclude_hashtag(self.data[i]['text'])
+                if len(text_without_hashtag) > 0: 
+                    response = comprehend.detect_key_phrases(Text=text_without_hashtag, LanguageCode=self.data[i]['language'])
+                else:
+                    response = {"KeyPhrases": []}
                 if len(response['KeyPhrases']) > 0:
                     for j in range(len(response['KeyPhrases'])):
                         self.data[i]['keyphrases'].append(response['KeyPhrases'][j]['Text'])
+                count += 1
+                print("{} posts recognized(keyphrases)".format(count))
         except Exception as e:
-            print("Detect keyphrases failed: " + str(e))
+            raise("Detect keyphrases failed: " + str(e))
         else:
             print("Detect keyphrases successful")
             
     def entities(self):
         try:
+            count = 0
             for i in range(len(self.data)):
-                response = comprehend.detect_entities(Text=self.data[i]['text'], LanguageCode=self.data[i]['language'])
+                text_without_hashtag = exclude_hashtag(self.data[i]['text'])
+                if len(text_without_hashtag) > 0:
+                    response = comprehend.detect_entities(Text=text_without_hashtag, LanguageCode=self.data[i]['language'])
+                else:
+                    response = {"Entities": []}
                 if len(response['Entities']) > 0:
                     self.data[i]['entities'] = response['Entities']
+                count += 1
+                print("{} posts recognized(entities)".format(count))
         except Exception as e:
-            print("Detect entities failed: " + str(e))
+            raise("Detect entities failed: " + str(e))
         else:
             print("Detect entities successful")
 
     def sentiment(self):
         try:
+            count = 0
             for i in range(len(self.data)):
-                response = comprehend.detect_sentiment(Text=self.data[i]['text'], LanguageCode=self.data[i]['language'])
+                text_without_hashtag = exclude_hashtag(self.data[i]['text'])
+                if len(text_without_hashtag) > 0:
+                    response = comprehend.detect_sentiment(Text=text_without_hashtag, LanguageCode=self.data[i]['language'])
+                else:
+                    response = {"Sentiment": ""}
                 if len(response['Sentiment']) > 0:
                     self.data[i]['sentiment'] = response['Sentiment']
+                count += 1
+                print("{} posts recognized(sentiment)".format(count))
         except Exception as e:
-            print("Detect sentiment failed: " + str(e))
+            raise("Detect sentiment failed: " + str(e))
         else:
             print("Detect sentiment successful")
 
@@ -118,9 +147,10 @@ data = ExtractData(file.resolve())
 data.extract()
 comprehend_data = Comprehend(data.ext_data)
 del data
-comprehend_data.language()
-#comprehend_data.entities()
-#comprehend_data.keyphrases()
+print("Send comprehend...")
+#comprehend_data.language()
+comprehend_data.entities()
+comprehend_data.keyphrases()
 comprehend_data.sentiment()
 
 #データをjsonで出力
